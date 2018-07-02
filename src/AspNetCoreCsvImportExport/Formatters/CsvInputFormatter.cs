@@ -21,14 +21,14 @@ namespace AspNetCoreCsvImportExport.Formatters
 
         public CsvInputFormatter(CsvFormatterOptions csvFormatterOptions)
         {
-            SupportedMediaTypes.Add(Microsoft.Net.Http.Headers.MediaTypeHeaderValue.Parse("text/csv"));
+            this.SupportedMediaTypes.Add(Microsoft.Net.Http.Headers.MediaTypeHeaderValue.Parse("text/csv"));
 
             if (csvFormatterOptions == null)
             {
                 throw new ArgumentNullException(nameof(csvFormatterOptions));
             }
 
-            _options = csvFormatterOptions;
+            this._options = csvFormatterOptions;
         }
 
         public override Task<InputFormatterResult> ReadRequestBodyAsync(InputFormatterContext context)
@@ -39,7 +39,7 @@ namespace AspNetCoreCsvImportExport.Formatters
             MediaTypeHeaderValue.TryParse(request.ContentType, out requestContentType);
 
 
-            var result = ReadStream(type, request.Body);
+            var result = this.ReadStream(type, request.Body);
             return InputFormatterResult.SuccessAsync(result);
         }
 
@@ -49,7 +49,7 @@ namespace AspNetCoreCsvImportExport.Formatters
             if (type == null)
                 throw new ArgumentNullException("type");
 
-            return IsTypeOfIEnumerable(type);
+            return this.IsTypeOfIEnumerable(type);
         }
 
         private bool IsTypeOfIEnumerable(Type type)
@@ -86,28 +86,42 @@ namespace AspNetCoreCsvImportExport.Formatters
                 list = (IList)Activator.CreateInstance(constructedListType);
             }
 
-            var reader = new StreamReader(stream, Encoding.GetEncoding(_options.Encoding));
+            var reader = new StreamReader(stream, Encoding.GetEncoding(this._options.Encoding));
 
-            bool skipFirstLine = _options.UseSingleLineHeaderInCsv;
+            bool skipFirstLine = this._options.UseSingleLineHeaderInCsv;
+            string[] headers = null;
             while (!reader.EndOfStream)
             {
                 var line = reader.ReadLine();
-                var values = line.Split(_options.CsvDelimiter.ToCharArray());
-                if(skipFirstLine)
+                var values = line.Split(this._options.CsvDelimiter.ToCharArray());
+                if (skipFirstLine)
                 {
+                    // if skipping first line, assume it contains the headers.
                     skipFirstLine = false;
+                    headers = values;
                 }
                 else
                 {
                     var itemTypeInGeneric = list.GetType().GetTypeInfo().GenericTypeArguments[0];
                     var item = Activator.CreateInstance(itemTypeInGeneric);
-                    var properties = _options.UseNewtonsoftJsonDataAnnotations
+                    var properties = this._options.UseNewtonsoftJsonDataAnnotations
                         ? item.GetType().GetProperties().Where(pi => !pi.GetCustomAttributes<JsonIgnoreAttribute>().Any()).ToArray()
                         : item.GetType().GetProperties();
+
                     // TODO: Maybe refactor to not use positional mapping?, mapping by index could generate errors pretty easily :)
                     for (int i = 0; i < values.Length; i++)
                     {
-                        properties[i].SetValue(item, Convert.ChangeType(values[i], properties[i].PropertyType), null);
+                        // we have headers, so use them
+                        if (headers != null)
+                        {
+                            var property = properties.SingleOrDefault(x => x.Name == headers[i] || x.GetCustomAttributes<JsonPropertyAttribute>()?.FirstOrDefault()?.PropertyName == headers[i]);
+                            property?.SetValue(item, Convert.ChangeType(values[i], property.PropertyType), null);
+                        }
+                        // else use property index.
+                        else
+                        {
+                            properties[i].SetValue(item, Convert.ChangeType(values[i], properties[i].PropertyType), null);
+                        }
                     }
 
                     list.Add(item);
@@ -115,17 +129,17 @@ namespace AspNetCoreCsvImportExport.Formatters
 
             }
 
-            if(typeIsArray)
+            if (typeIsArray)
             {
                 Array array = Array.CreateInstance(itemType, list.Count);
 
-                for(int t = 0; t < list.Count; t++)
+                for (int t = 0; t < list.Count; t++)
                 {
                     array.SetValue(list[t], t);
                 }
                 return array;
             }
-            
+
             return list;
         }
     }
